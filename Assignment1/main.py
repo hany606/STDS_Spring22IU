@@ -1,4 +1,6 @@
 from random import randint
+from random import sample as r_sample
+from colorlog import DEBUG
 import numpy as np
 from math import ceil
 from copy import deepcopy
@@ -7,6 +9,12 @@ from collections import Mapping, Container
 from sys import getsizeof
 import time
  
+DEBUG = False # True
+
+def printt(s, debug=DEBUG):
+    if(debug):
+        print(s)
+
 # Source: https://code.tutsplus.com/tutorials/understand-how-much-memory-your-python-objects-use--cms-25609
 def deep_getsizeof(o, ids):
     """Find the memory footprint of a Python object
@@ -43,28 +51,33 @@ def deep_getsizeof(o, ids):
 
 class Generator:
 
-    def __init__(self, static_range=False):
+    def __init__(self, static_range=True):
         self.count = 0 # for generator style generation
         self.range = lambda n: 1000 if static_range else n*1000
 
     def generate(self, N=1e6):
         # Generate a list of numbers with N length
         # l = [randint(0,N*100) for i in range(N)]
+        printt(f"Range of elements [0, {self.range(N)}]", debug=True)
         N = int(N)
-        l = np.random.randint(self.range(N), size=N)    # N is multiplied with 1000 to decrease the probability of having two similar elements
+        l = np.random.randint(self.range(N), size=N).reshape((-1,1))    # N is multiplied with 1000 to decrease the probability of having two similar elements
         return l
 
-    def generate2(self, N=1e6):
-        N = int(N)
-        if(self.count == N):
-            return -1
-        yield randint(0,self.range(N))
+    def generate_seq(self, N):
+        self.range = lambda _: N
+        return r_sample(range(1,N), N)
+    
+    def generate_sorted_seq(self, N):
+        self.range = lambda _: N
+        return np.array([i+1 for i in range(N)])#r_sample(range(N), N)
 
 class Streamer:
     def __init__(self, *args, **kwargs):
         N = kwargs.pop("N", 1e6)
         self.generator = Generator(*args, **kwargs)
         self.gen = self.generator.generate(N=N)
+        # self.gen = self.generator.generate_seq(N=N)
+        # self.gen = self.generator.generate_sorted_seq(N=N)
         self.current_idx = 0
 
     def get_batch(self, k):
@@ -97,7 +110,7 @@ class Buffer(object):
         if(self.sorted):
             self.buffer = np.sort(self.buffer)
         self.set_buffer_full()
-        print(f"In buffer: {self.buffer}")
+        printt(f"In buffer: {self.buffer}")
 
     def copy(self, buffer):
         self.buffer = deepcopy(buffer.buffer)
@@ -155,10 +168,13 @@ class MRL98:
         self.sum_offset_collapsed = 0     # summ of the offsets from the collapse operation
         self.buffers_sorted = buffers_sorted
         self.buffers = [self._create_buffer() for _ in range(b)]#np.ndarray((10,),dtype=np.object)
-        self.inf = int(max_range)*1000 + 1 #np.inf
-        print(f"---- -Inf: {-self.inf}  -- +Inf: {self.inf} ----")
+        self.inf = int(max_range*1000) + 1 #np.inf
+        printt(f"---- -Inf: {-self.inf}  -- +Inf: {self.inf} ----", debug=True)
         self.last_collapse_types = FixedLengthFIFO()
         self.collapse_even_type = 1
+        self.leftovers = 0
+        # self.history = [[]] # TODO (Improvement): Make history of the operations and print a tree 
+
         # self.buffers = np.empty((self.b, k)) # buffers memory bxk
         # # Intuitively, the weight of a buffer is the number of input elements represented by each element in the buffer. 
         # self.weights = np.zeros((self.b, 1))      # weights bx1
@@ -169,12 +185,12 @@ class MRL98:
         r = [getsizeof(buffer.buffer) for buffer in self.buffers]
         # r += 
         mem = sum(r)/1024
-        print(f"Memory consumption: {mem}KB")
+        printt(f"Memory consumption: {mem}KB")
         return mem
 
     def get_time_elapsed(self):
         t = self.final_time - self.initial_time
-        print(f"Time elapsed: {t}s")
+        printt(f"Time elapsed: {t}s")
         return t
 
     def _clear_buffer(self, idx):
@@ -211,7 +227,7 @@ class MRL98:
         """
         iter = 0
         while not s.is_empty():
-            print(f"Iteration: {iter}")
+            printt(f"Iteration: {iter}")
             # smallest level for full buffers 
             levels = []
             empty_buffers_idx = [] # TODO
@@ -226,7 +242,7 @@ class MRL98:
             if(len(levels) > 0):
                 min_level = min(levels)
             num_empty_buffers = len(empty_buffers_idx)
-            print(f"Num. empty buffers: {num_empty_buffers}")
+            printt(f"Num. empty buffers: {num_empty_buffers}")
             # If there is exactly one empty buffer, invoke NEW and assign it level l
             if(num_empty_buffers == 1):
                 buffer = self.buffers[empty_buffers_idx[0]]
@@ -278,9 +294,11 @@ class MRL98:
             pos_inf = np.array([self.inf for i in range(leftovers - (leftovers//2))])
             k_elements = np.append(k_elements, neg_inf, 0)
             k_elements = np.append(k_elements, pos_inf, 0)
+            self.leftovers = leftovers # only set in the last not complete buffer
+            printt(f"Leftovers: {leftovers}")
 
         # The operation simply populates the input buffer with the next k elements from the input sequence        
-        print(f"New->Store: {k_elements}")
+        printt(f"New->Store: {k_elements}")
         buffer.store(k_elements)
         # Then, labels the buffer as full, and assigns it a weight of 1.
         buffer.set_weight(1)
@@ -295,8 +313,8 @@ class MRL98:
             
             param buffers: list
         """
-        # print([self.buffers[i] for i in range(len(buffers))])
-        print(f"Collapse -> Input: {[buffers[i] for i in range(len(buffers))]}")
+        # printt([self.buffers[i] for i in range(len(buffers))])
+        printt(f"Collapse -> Input: {[buffers[i] for i in range(len(buffers))]}")
 
         c = len(buffers)
         # The weight of the output buffer w(Y) is the sum of weights of input buffers: \sum_{i=1}^c w(X_i) 
@@ -318,15 +336,15 @@ class MRL98:
         # ---------------------------------
         # TODO (Improvement): implement it in a better way if the buffers are sorted anyway:
         #           - Combine all of them in matrix (CxK) then make k pointers that point to the selected element which is the minimum not added to the big matrix in the row
-        # print("-------------------------------")
-        # print(buffers[1])
+        # printt("-------------------------------")
+        # printt(buffers[1])
         sorted_elements = self._merge_buffers(buffers)
 
         # Take k spaced elements
         # Let (w(Y)+1)/2 is the offset
         offset = None
         if(output_weight % 2): # odd
-            print("Collapse Odd type")
+            printt("Collapse Odd type")
             offset = (output_weight+1)//2
             self.last_collapse_types.push(4) # As it is binary code (1,2,4) 1-> first choice of even collapse, 2 second choice of even collapse, and 4 odd collapse
             # positions = j*w(Y) +(w(Y)+1)/2 for j = 0,1,2,...k-1 -> [j*w+(w+1)//2 for j in range(k)]  indcies
@@ -336,12 +354,12 @@ class MRL98:
             self.last_collapse_types.push(self.collapse_even_type)
             # 1. positions = jw(Y) + w(Y)/2
             if(self.collapse_even_type == 1):
-                print("Collapse Even 1 type")
+                printt("Collapse Even 1 type")
                 offset = (output_weight)//2
 
             # 2. positions = jw(Y) + (w(Y)+2)/2
             elif(self.collapse_even_type == 2):
-                print("Collapse Even 2 type")
+                printt("Collapse Even 2 type")
                 offset = (output_weight+2)//2
 
             # Alternate between the two choices when we have successive even collapses with the same choice
@@ -351,14 +369,15 @@ class MRL98:
         indcies = [j*output_weight+offset-1 for j in range(self.k)]
         output_elements = sorted_elements[indcies]
         output_buffer.store(output_elements.reshape((-1,1)))
-        print(f"Collapse -> Output: {list(output_buffer.buffer.reshape((-1)))}")
+        output_buffer.set_weight(output_weight)
+        printt(f"Collapse -> Output: {list(output_buffer.buffer.reshape((-1)))}")
         self.num_collapsed += 1
         self.sum_weight_out_collapsed += output_weight#np.sum(output_elements)
         self.sum_offset_collapsed += offset
-        # print(f"Collapse operation data: num_collapsed={self.num_collapsed} -> sum={self.sum_weight_out_collapsed}")
-        lemma1_assertion = self.sum_offset_collapsed >= ((self.num_collapsed + self.sum_weight_out_collapsed -1)/2)
-        print(f"Lemma 1 ({lemma1_assertion}): {self.sum_offset_collapsed} >= {((self.num_collapsed + self.sum_weight_out_collapsed -1)/2)}")
-        assert lemma1_assertion # Lemma 1
+        # printt(f"Collapse operation data: num_collapsed={self.num_collapsed} -> sum={self.sum_weight_out_collapsed}")
+        lemma1_assertion = self.sum_offset_collapsed >= ((self.num_collapsed + self.sum_weight_out_collapsed -1)//2)
+        printt(f"Lemma 1 ({lemma1_assertion}): {self.sum_offset_collapsed} >= {((self.num_collapsed + self.sum_weight_out_collapsed -1)//2)}")
+        # assert lemma1_assertion # Lemma 1
         if(level is not None):
             output_buffer.set_level(level)
         for buffer in buffers:
@@ -384,9 +403,12 @@ class MRL98:
         # W = w(X1) + w(X2) + . . . + w(Xc). 
         W = sum([b.weight for b in buffers])
         # The output is the element in position ceil[\phi`kW]
-        phi_approx = phi # TODO: Find out what is the relation between phi and phi_approx (phi: real dataset, phi_approx: dataset augmented with -inf and +inf added to the last buffer)
-        idx = ceil(phi_approx * self.k * W)
-        return sorted_elements[idx]
+        beta = (self.N+self.leftovers)/self.N # 1+self.leftovers/self.N -> N is too much and leftovers is too small most probably will be numerical errors here (I am not sure) 
+        printt(f"Beta={beta}")
+        phi_approx = (2*phi+beta-1)/(2*beta) #phi # TODO: Find out what is the relation between phi and phi_approx (phi: real dataset, phi_approx: dataset augmented with -inf and +inf added to the last buffer)
+        printt(f"\phi={phi}, \phi`={phi_approx}")
+        idx = ceil(phi_approx * self.k * W) - 1 # Zero index and the formula was for 1-indexed
+        return int(sorted_elements[idx])
 
     # ----------------------------------------------------------------------------------------------------------------
 
@@ -396,7 +418,7 @@ class MRL98:
         all_elements = []        
         if(self.buffers_sorted):
             pointers = [0 for _ in range(c)]
-            get_element = lambda i: buffers[i][pointers[i]]
+            get_element = lambda i: buffers[i][pointers[i]][0]
 
             for i in range(self.k*c):
                 # TODO (Improvement): implement it in a better and more compact way
@@ -404,39 +426,39 @@ class MRL98:
                 for i_p in range(c):
                     if(pointers[i_p] >= self.k):
                         continue
-                    # print(f"Min: {mn_pointer_idx}")
+                    # printt(f"Min: {mn_pointer_idx}")
                     mn_element = get_element(mn_pointer_idx)
-                    # print(i_p)
+                    # printt(i_p)
                     current_element = get_element(i_p)
                     if(current_element < mn_element):
                         mn_pointer_idx = i_p
-                # print("###########")
+                # printt("###########")
                 element = get_element(mn_pointer_idx) #self.buffers[mn_pointer_idx][pointers[mn_pointer_idx]]
                 all_elements.extend([element]*buffers[mn_pointer_idx].weight)
-                # print(f"Minnn: {mn_pointer_idx} -> {pointers[mn_pointer_idx]} -> {element}")
+                # printt(f"Minnn: {mn_pointer_idx} -> {pointers[mn_pointer_idx]} -> {element}")
 
                 pointers[mn_pointer_idx] += 1
-                # print(all_elements)
-                # print("-----")
+                # printt(all_elements)
+                # printt("-----")
             all_elements = np.array(all_elements).reshape((-1))
             sorted_elements = np.sort(all_elements)
-            # print(sorted_elements)
+            # printt(sorted_elements)
             return sorted_elements
 
 if __name__ == '__main__':
-    N = 26
+    N = 5000#1e5
     k = 5
     # Testing Streamer
     s = Streamer(N=N)
-    # print(s.gen)
+    # printt(s.gen, debug=True)
     # while not s.is_empty():
-    #     print(s.get_batch(k))
+    #     printt(s.get_batch(k))
 
     # Testing Generator
     # gen = Generator(static_range=True)
     # l = gen.generate(N=N)
-    # print(l)    
-    # print(len(l))
+    # printt(l)    
+    # printt(len(l))
 
     # Testing Algorithm
     algo = MRL98(N=N, b=3, k=k, max_range=s.generator.range(N))
