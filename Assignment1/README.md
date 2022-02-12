@@ -27,19 +27,19 @@ In this directory, you can find the implementation of [MRL98] and the codes for 
 python3 main.py
 ```
 
-'''
+```bash
 python3 benchmark.py --run 0 --file benchmark_data.json
 
 python3 benchmark.py --run 1 --file reduced_benchmark_data.json
-'''
+```
 
-'''
+```bash
 python3 results_gen.py 
 
 python3 results_gen.py --time 1 --file reduced_benchmark_data_res.json
 
 python3 results_gen.py --plot 0 
-'''
+```
 
 
 ## References
