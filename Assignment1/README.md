@@ -6,18 +6,31 @@ In this directory, you can find the implementation of [MRL98] and the codes for 
 ## Directory structure:
 
 ├── benchmark.py: script to run the testing for different experiments
+
 ├── DataStructure.py: includes Buffer class
+
 ├── main.py: script to run MRL98 algorithm
+
 ├── MRL98.py: includes the main implementation of the algorithm
+
 ├── README.md
+
 ├── results_gen.py: script to generate the plots and table in the report
+
 ├── shared.py: includes functions that are shared between different files
+
 ├── STDS_A1_HanyHamed.pdf: Report for submission
+
 ├── Streamer.py: includes Streamer class and Generator class that responsible for generating the data stream
+
 ├── benchmark_data.json: Experiments with different parameters as it is mentioned in [MRL98]
+
 ├── benchmark_data_res.csv: generated table from benchmark_data.json experiments
+
 ├── benchmark_data_res.json: results of running MRL98 with experiments in benchmark_data.json
+
 ├── reduced_benchmark_data.json: reduced version of experiments in benchmark_data.json
+
 └── reduced_benchmark_data_res.json: results of running MRL98 with experiments in reduced_benchmark_data.json
 
 
