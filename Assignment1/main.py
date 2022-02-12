@@ -60,6 +60,23 @@ class Generator:
             return -1
         yield randint(0,self.range(N))
 
+class Streamer:
+    def __init__(self, *args, **kwargs):
+        N = kwargs.pop("N", 1e6)
+        self.generator = Generator(*args, **kwargs)
+        self.gen = self.generator.generate(N=N)
+        self.current_idx = 0
+
+    def get_batch(self, k):
+        slice_idx = min(self.current_idx + k, len(self.gen)) 
+        ret = self.gen[self.current_idx:slice_idx]
+        self.current_idx += k
+        return ret
+
+    def is_empty(self):
+        return self.current_idx >= len(self.gen)
+
+
 class Buffer(object):
     def __init__(self, k, sorted):
         self.k = k
@@ -70,7 +87,7 @@ class Buffer(object):
         self.buffer = np.empty((self.k, 1), dtype=np.int32) 
         self.weight = 0
         self.level = 0 # Associate with each buffer X an integer L(X) that denotes its level.
-        self.empty = 0
+        self.empty = 1  # 1: empty, 0: full (not empty)
 
     def store(self, k_elements):
         '''
@@ -79,7 +96,8 @@ class Buffer(object):
         self.buffer = k_elements
         if(self.sorted):
             self.buffer = np.sort(self.buffer)
-        # print(f"In buffer: {self.buffer}")
+        self.set_buffer_full()
+        print(f"In buffer: {self.buffer}")
 
     def copy(self, buffer):
         self.buffer = deepcopy(buffer.buffer)
@@ -95,9 +113,13 @@ class Buffer(object):
     def set_level(self, l):
         self.level = l
     def set_buffer_empty(self):
-        self.empty = 0
-    def set_buffer_full(self):
         self.empty = 1
+    def set_buffer_full(self):
+        self.empty = 0
+
+    def is_empty(self):
+        # True: empty, False: Full
+        return self.empty == 1
 
 class FixedLengthFIFO:
     def __init__(self, fixed_length=2):
@@ -122,8 +144,8 @@ class FixedLengthFIFO:
 
 
 
+
 class MRL98:
-    # TODO: sort the elements when we store them into the buffers or not
     def __init__(self, N=1e6, b=10, k=50, buffers_sorted=True, max_range=1e6):
         self.N = int(N)
         self.b = b  # number of buffers
@@ -133,7 +155,8 @@ class MRL98:
         self.sum_offset_collapsed = 0     # summ of the offsets from the collapse operation
         self.buffers_sorted = buffers_sorted
         self.buffers = [self._create_buffer() for _ in range(b)]#np.ndarray((10,),dtype=np.object)
-        self.inf = int(max_range) + 1 #np.inf
+        self.inf = int(max_range)*1000 + 1 #np.inf
+        print(f"---- -Inf: {-self.inf}  -- +Inf: {self.inf} ----")
         self.last_collapse_types = FixedLengthFIFO()
         self.collapse_even_type = 1
         # self.buffers = np.empty((self.b, k)) # buffers memory bxk
@@ -141,7 +164,6 @@ class MRL98:
         # self.weights = np.zeros((self.b, 1))      # weights bx1
         # self.labels = np.zeros((self.b, 1))
         
-
     def get_memory_usage(self):
         # return deep_getsizeof(self.buffers)
         r = [getsizeof(buffer.buffer) for buffer in self.buffers]
@@ -162,52 +184,81 @@ class MRL98:
     def _create_buffer(self):
         return Buffer(self.k, sorted=self.buffers_sorted)
 
-    # WIP
-    def run(self, l, phi):
+    # Finished
+    def run(self, s, phi):
         '''
             An algorithm for computing approximate quartiles consists of a series of invocations of NEW and COLLAPSE, terminating with OUTPUT.
 
             NEW populates empty buffers with input
             COLLAPSE reclaims some of them by collapsing a chosen subset of full buffers. 
             OUTPUT is invoked on the final set of full buffers. 
+
+
+            param s: Streamer
         '''
         self.initial_time = time.time()
-        # length N of data stream
-
-        # 1. Put the first bk elements into buffers successively and set their weights to 1.
-        for i in range(self.b):
-            e = l[i*self.k:(i+1)*self.k]
-            print(f"From Stream: {e}")
-            self.new(self.buffers[i], e)
-
-        self.collapse_policy()
-
-
-        # self.collapse(self.buffers)
-        # Pass a new element to the algorithm
-        # # Perform one-pass and returns the quantile
-        # q = None
-        # print(self.N, self.k)
-        # for i in range(0, self.N, self.k):
-        #     # Take k sequence from the list each time
-        #     lim = min(i+self.k, len(l))
-        #     e = l[i:lim]
-        #     print(f"e:{e}")
-        #     self.new(self.buffers[0], e) # TODO: not the correct place (Understand where it should be)
-        #     q = self._pass(e, phi)
-        #     # return -1
-        #     # yield q
-        # self.collapse(self.buffers)
-
-        # TODO
-        # TODO: call output
-        # return self.output(self.buffers, phi)
+        ret = self.collapse_policy(s, phi)
         self.final_time = time.time()
+        return ret
 
-    def _pass(self, e, phi):
-        q = None
-        return q
+    # Finished
+    def collapse_policy(self, s, phi):
+        """
+            Based on the proposed New Algorithm in the paper MRL (Approximate Medians and other Quantiles in One Pass and with Limited Memory )
+            Criteria when to use New/Collapse operations
+            
+            param s: Streamer
+        """
+        iter = 0
+        while not s.is_empty():
+            print(f"Iteration: {iter}")
+            # smallest level for full buffers 
+            levels = []
+            empty_buffers_idx = [] # TODO
+            for i in range(self.b):
+                buff = self.buffers[i]
+                if(buff.is_empty()):
+                    empty_buffers_idx.append(i)
+                    continue
+                levels.append(buff.level)
+            # Let l be the smallest among the levels of currently full buffers
+            min_level = 0
+            if(len(levels) > 0):
+                min_level = min(levels)
+            num_empty_buffers = len(empty_buffers_idx)
+            print(f"Num. empty buffers: {num_empty_buffers}")
+            # If there is exactly one empty buffer, invoke NEW and assign it level l
+            if(num_empty_buffers == 1):
+                buffer = self.buffers[empty_buffers_idx[0]]
+                self.new(buffer, s.get_batch(self.k)) # TODO
+                buffer.set_level(min_level)
+            # If there are at least two empty buffers, invoke NEW on each and assign level 0 to each one. 
+            elif(num_empty_buffers >= 2):
+                for i in range(0, num_empty_buffers):
+                    buffer = self.buffers[empty_buffers_idx[i]]
+                    self.new(buffer, s.get_batch(self.k))    # TODO
+                    buffer.set_level(0)
+                    
+            # If there are no empty buffers, invoke COLLAPSE on the set of buffers with level l. Assign the output buffer, level l + 1.
+            else:
+                # TODO: can be done better with numpy and filter
+                buffers = [] # buffers with level l
+                for i in range(self.b):
+                    buff = self.buffers[i]
+                    if(buff.level == min_level):
+                        buffers.append(self.buffers[i])
+                output_buffer = self.collapse(buffers, level=min_level+1)
+            iter += 1
 
+        non_empty_buffers = []
+        for i in range(self.b):
+            buff = self.buffers[i]
+            if(not buff.is_empty()):
+                non_empty_buffers.append(self.buffers[i])
+
+        return self.output(non_empty_buffers, phi)
+    # ----------------------------------------------------------------------------------------------------------------
+    # Basic Operations
     # Finished
     def new(self, buffer, k_elements):
         '''
@@ -225,7 +276,6 @@ class MRL98:
             # an equal number of -inf and +inf elements are added to make up for the deficit.
             neg_inf = np.array([-self.inf for i in range(leftovers//2)])
             pos_inf = np.array([self.inf for i in range(leftovers - (leftovers//2))])
-            # TODO: not sure if it is added to the end of the array or should be somewhere else
             k_elements = np.append(k_elements, neg_inf, 0)
             k_elements = np.append(k_elements, pos_inf, 0)
 
@@ -236,46 +286,6 @@ class MRL98:
         buffer.set_weight(1)
         buffer.set_buffer_full()
 
-    # WIP
-    def collapse_policy(self):
-        """
-            Based on the proposed New Algorithm in the paper MRL (Approximate Medians and other Quantiles in One Pass and with Limited Memory )
-            Criteria when to use New/Collapse operations
-        """
-        # smallest level for full buffers 
-        levels = []
-        empty_buffers_idx = [] # TODO
-        for i in range(self.b):
-            buff = self.buffers[i]
-            if(buff.empty == 0):
-                empty_buffers_idx.append(i)
-                continue
-            levels.append(buff.level)
-        # Let l be the smallest among the levels of currently full buffers
-        min_level = min(levels)
-        num_empty_buffers = len(empty_buffers_idx)
-        # If there is exactly one empty buffer, invoke NEW and assign it level l
-        if(num_empty_buffers == 1):
-            buffer = self.buffers[empty_buffers_idx[0]]
-            self.new(buffer) # TODO
-            buffer.set_level(l)
-        # If there are at least two empty buffers, invoke NEW on each and assign level 0 to each one. 
-        elif(num_empty_buffers >= 2):
-            for i in range(0, num_empty_buffers):
-                buffer = self.buffers[empty_buffers_idx[i]]
-                self.new(buffer)    # TODO
-                buffer.set_level(0)
-                
-        # If there are no empty buffers, invoke COLLAPSE on the set of buffers with level l. Assign the output buffer, level l + 1.
-        else:
-            # TODO: can be done better with numpy and filter
-            buffers = [] # buffers with level l
-            for i in range(self.b):
-                buff = self.buffers[i]
-                if(buff.level == min_level):
-                    buffers.append(self.buffers[i])
-            output_buffer = self.collapse(buffers, level=min_level+1)
-            # What should I do with this output buffer and the input buffers? -> self.collapse handles this
 
     # Finished
     def collapse(self, buffers, level=None):
@@ -293,8 +303,9 @@ class MRL98:
         output_weight = sum([b.weight for b in buffers])
         output_buffer = self._create_buffer()
         
-        # Sort elements in buffers
-        # TODO: It can be elemented without materialization (storing really in the memory) ->  compute the offset and compute the indicies first 
+        # Sort elements in buffers (Done inside the buffer.store())
+
+        # TODO (Improvement): It can be elemented without materialization (storing really in the memory) ->  compute the offset and compute the indicies first 
         #           Then while calculating the elements instead of adding them to the array just check if it is should be added to the output buffer or not
         # Compute offset
         # Compute indicies
@@ -305,7 +316,7 @@ class MRL98:
         #   Then added to the buffer and increase the next output index
 
         # ---------------------------------
-        # TODO: implement it in a better way if the buffers are sorted anyway:
+        # TODO (Improvement): implement it in a better way if the buffers are sorted anyway:
         #           - Combine all of them in matrix (CxK) then make k pointers that point to the selected element which is the minimum not added to the big matrix in the row
         # print("-------------------------------")
         # print(buffers[1])
@@ -350,12 +361,34 @@ class MRL98:
         assert lemma1_assertion # Lemma 1
         if(level is not None):
             output_buffer.set_level(level)
-        # TODO: What happens to the buffers that collapsed, what will be the value stored inside them are they going to be empty what about their weights?
         for buffer in buffers:
             buffer.clear()
         
         buffers[0].copy(output_buffer)
         return output_buffer
+
+    # WIP
+    def output(self, buffers, phi):
+        '''
+            [Basic Operation]
+            OUTPUT is performed exactly once, just before termination.
+            It takes c > 2 full input buffers, X1,X2,. . . ,X,, of size k. 
+            It outputs a single element, corresponding to the approximate \phi'-quartile of the augmented dataset. 
+            Recall that the \phi-quartile of the original dataset corresponds to the \phi' quartile of the augmented dataset, 
+                consisting of the -inf and +inf elements added to the last buffer.
+            
+            param buffers: list
+        '''
+        # Similar to COLLAPSE, this operator makes w(Xi) copies of each element in Xi and sorts all the input buffers together, taking the multiple copies of each element into account. 
+        sorted_elements = self._merge_buffers(buffers)
+        # W = w(X1) + w(X2) + . . . + w(Xc). 
+        W = sum([b.weight for b in buffers])
+        # The output is the element in position ceil[\phi`kW]
+        phi_approx = phi # TODO: Find out what is the relation between phi and phi_approx (phi: real dataset, phi_approx: dataset augmented with -inf and +inf added to the last buffer)
+        idx = ceil(phi_approx * self.k * W)
+        return sorted_elements[idx]
+
+    # ----------------------------------------------------------------------------------------------------------------
 
     # Finished and tested
     def _merge_buffers(self, buffers):
@@ -366,7 +399,7 @@ class MRL98:
             get_element = lambda i: buffers[i][pointers[i]]
 
             for i in range(self.k*c):
-                # TODO: implement it in a better and more compact way
+                # TODO (Improvement): implement it in a better and more compact way
                 mn_pointer_idx = np.argmin(pointers) # get the pointer with the least value inside to avoid a bug if we started with a value of the mn_pointer_idx = 0
                 for i_p in range(c):
                     if(pointers[i_p] >= self.k):
@@ -390,41 +423,26 @@ class MRL98:
             # print(sorted_elements)
             return sorted_elements
 
-    # Finished
-    def output(self, buffers, phi):
-        '''
-            [Basic Operation]
-            OUTPUT is performed exactly once, just before termination.
-            It takes c > 2 full input buffers, X1,X2,. . . ,X,, of size k. 
-            It outputs a single element, corresponding to the approximate \phi'-quartile of the augmented dataset. 
-            Recall that the \phi-quartile of the original dataset corresponds to the \phi' quartile of the augmented dataset, 
-                consisting of the -inf and +inf elements added to the last buffer.
-            
-            param buffers: list
-        '''
-        # Similar to COLLAPSE, this operator makes w(Xi) copies of each element in Xi and sorts all the input buffers together, taking the multiple copies of each element into account. 
-        sorted_elements = self._merge_buffers(buffers)
-        # W = w(X1) + w(X2) + . . . + w(Xc). 
-        W = sum([b.weight for b in buffers])
-        # The output is the element in position ceil[\phi`kW]
-        phi_approx = phi # TODO: Find out what is the relation between phi and phi_approx (phi: real dataset, phi_approx: dataset augmented with -inf and +inf added to the last buffer)
-        idx = ceil(phi_approx * self.k * W)
-        return sorted_elements[idx]
-
-    def test(self):
-        pass
-
 if __name__ == '__main__':
-    gen = Generator(static_range=True)
     N = 26
     k = 5
-    l = gen.generate(N=N)
-    print(l)    
-    print(len(l))
-    algo = MRL98(N=N, b=3, k=k, max_range=gen.range(N))
-    algo.run(l, 0.5)
-    print(algo.get_memory_usage())
-    print(algo.get_time_elapsed())
+    # Testing Streamer
+    s = Streamer(N=N)
+    # print(s.gen)
+    # while not s.is_empty():
+    #     print(s.get_batch(k))
+
+    # Testing Generator
+    # gen = Generator(static_range=True)
+    # l = gen.generate(N=N)
+    # print(l)    
+    # print(len(l))
+
+    # Testing Algorithm
+    algo = MRL98(N=N, b=3, k=k, max_range=s.generator.range(N))
+    print(f"Output: {algo.run(s, 0.5)}")
+    print(f"MEMORY: {algo.get_memory_usage()}")
+    print(f"Time: {algo.get_time_elapsed()}")
 
     # b1 = Buffer(k=k, sorted=True)
     # b1.store(np.array([52,12,72,132,102]))
