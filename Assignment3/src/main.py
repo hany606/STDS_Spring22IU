@@ -4,6 +4,9 @@ from time import sleep
 from SA import SA
 import argparse
 
+import timeit
+
+start = timeit.default_timer()
 
 parser = argparse.ArgumentParser()
 # TODO: Force different seed from argparse if it exists against the one in the json file
@@ -47,20 +50,24 @@ if(visualize):
 # plt.show()
 # exit()
 # print(to_list(cities)[0]["distances"])
+
+start = timeit.default_timer()
 costs, temps, new_solution, new_solution_cost = SA(cities, initial_temp, cooling_rate, visualize=visualize, visualization_rate=visualization_rate, fig=fig, ax=ax)
-print(len(costs))
-print(costs[-1])
-# print(to_dict(new_solution))
-# print(new_solution)
+stop = timeit.default_timer()
+
+print('Time: ', stop - start)
+print(f"Final Cost: {costs[-1]}")
+print(f"Number of steps: {len(costs)}")
+
 path = generate_path(new_solution)
 title = f"Final solution, Cost={costs[-1]:.3f}\nInitial temp={initial_temp}, Cooling rate={cooling_rate}"
 plot_animation(fig, ax, cities, path, pause=5, title=title)
 clear_plot(ax)
-plt.plot([i for i in range(len(costs))], costs, label="Cost")
+plt.plot([i for i in range(len(costs))], [c/costs[0]for c in costs], label="Cost")
 plt.legend()
-plt.plot([i for i in range(len(temps))], temps, label="Temp")
+plt.plot([i for i in range(len(temps))], [t/temps[0] for t in temps], label="Temp")
 plt.legend()
-plt.title("Initial temp={initial_temp}, Cooling rate={cooling_rate}")
+plt.title(f"Initial temp={initial_temp}, Cooling rate={cooling_rate}")
 plt.draw()
 plt.pause(3)
 # for i in range(100):

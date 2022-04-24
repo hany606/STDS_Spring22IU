@@ -53,7 +53,7 @@ def get_xy_gps(cities):
     for city_name in cities.keys():
         city = cities[city_name]
         geo = city["geo"]
-        xy = translate(Point(geo), xoff=-90)
+        xy = translate(Point(geo))
         y,x = xy.x, xy.y
         xy = {"xy":[x,y]}
         geo = {"geo": geo}
@@ -64,17 +64,17 @@ def get_distances(cities):
     new_cities = {}
     for city_name in cities.keys():
         city = cities[city_name]
-        m = city["xy"]
-        # m = city["geo"]
+        # m = city["xy"]
+        m = city["geo"]
         distances = {}
         for city_name2 in cities.keys():
             city2 = cities[city_name2]
-            m2 = city2["xy"]
-            # m2 = city2["geo"]
+            # m2 = city2["xy"]
+            m2 = city2["geo"]
             if(city_name == city_name2):
                 continue
-            city_distance = np.linalg.norm(np.array(m)-np.array(m2))
-            # city_distance = distance.distance(m, m2).km/1000
+            # city_distance = np.linalg.norm(np.array(m)-np.array(m2))
+            city_distance = distance.distance(m, m2).km#/1000
 
             distances[city_name2] = city_distance
         new_cities[city_name] = {**city,**{"distances":distances}}

@@ -16,7 +16,7 @@ def compute_cost(cities):
     cost += cities[-1]["distances"][cities[0]["name"]]
     return cost
 
-def generate_solution(cities, iter=1):
+def generate_solution(cities, iter=3):
     new_cities = deepcopy(cities)
     for i in range(iter):
         # pick two cities in the path
@@ -48,20 +48,27 @@ def SA( cities, initial_temp=10000, cooling_rate=0.95,
         # Calculate the cost for the new solution
         new_solution_cost = compute_cost(new_solution)
         # Calculate p
-        p = (math.exp((current_solution_cost - new_solution_cost)))/temp
+        p = safe_exp((current_solution_cost - new_solution_cost)/temp)#(math.exp()
+        # print(p)
         # if new solution is better or random less than p
         if(new_solution_cost < current_solution_cost or random.uniform(0,1) < p):
             current_solution = new_solution
             current_solution_cost = new_solution_cost
-            costs.append(new_solution_cost)
-            temps.append(temp)
-            if(visualize):
-                path = generate_path(new_solution)
-                title = f"Temp={temp:.3f}, Cost={new_solution_cost:.3f}\nInitial temp={initial_temp}, Cooling rate={cooling_rate}"
-                plot_animation(fig, ax, cities_dict, path, pause=visualization_rate, title=title)
+        if(visualize):
+            path = generate_path(current_solution)
+            title = f"Temp={temp:.3f}, Cost={current_solution_cost:.3f}\nInitial temp={initial_temp}, Cooling rate={cooling_rate}"
+            plot_animation(fig, ax, cities_dict, path, pause=visualization_rate, title=title)
 
         # print(current_solution_cost)
         temp *= cooling_rate
+        costs.append(current_solution_cost)
+        temps.append(temp)
         time += 1
     return costs, temps, new_solution, new_solution_cost
 
+
+def safe_exp(v):
+    try:
+        return math.exp(v)
+    except:
+        return 0
